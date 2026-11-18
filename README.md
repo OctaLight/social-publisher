@@ -31,6 +31,8 @@
 - `config.json` 默认使用 `driver: "direct"` + `pluginDir` 指向本地源码，无需安装 Chrome 商店插件
 - 安装了 `ws` 包用于 CDP WebSocket 通信（Node.js 内置 WebSocket 在部分场景不稳定）
 - 专用 Chrome profile 路径默认为项目内 `chrome-profile/` 子目录
+- **init.mjs**: Chrome 检测增加 Windows 路径分支（`Program Files` 和 `LOCALAPPDATA`）
+- **hub.mjs**: NAS 重挂逻辑区分 macOS（diskutil/osascript）和 Windows（net use）
 
 ---
 
