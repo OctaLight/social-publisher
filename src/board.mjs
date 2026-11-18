@@ -1,6 +1,6 @@
 // 飞书多维表格看板：期数、平台发布、每日流量、知识站每日、渠道转化。中控单向写入，按 key 更新不重复。
 import fs from 'node:fs'; import path from 'node:path'; import { execFile } from 'node:child_process'; import { fileURLToPath } from 'node:url';
-import { db, NAMES, STATE_CN, episodes, getTasks, setMeta, getMeta } from './db.mjs';
+import { db, NAMES, STATE_CN, episodes, getTasks, setMeta } from './db.mjs';
 import { config } from './feishu.mjs';
 import { evaluate, withTab } from './driver.mjs';
 import { SITE } from './site.mjs';
