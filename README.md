@@ -6,33 +6,30 @@
 
 | 原始仓库 | 角色 | 关系 |
 |---------|------|------|
-| [mdldm-maitian](https://github.com/CzzzzzzJ/mdldm-maitian) | 中控 Hub（调度/防重/数据/Web大屏/飞书通知） | 主仓库，本版本在此基础上增加 Windows 支持 |
-| [mdldm-maitian-publisher](https://github.com/CzzzzzzJ/mdldm-maitian-publisher) | Chrome 插件源码（各平台填写引擎） | 作为依赖目录 `maitian-publisher/` 存在 |
+| [mdldm-maitian](https://github.com/CzzzzzzJ/mdldm-maitian) | 中控 Hub（调度/防重/数据/Web大屏/飞书通知） | 主仓库，本版本在此基础上增加 Windows 支持和多项稳定性修复 |
+| [mdldm-maitian-publisher](https://github.com/CzzzzzzJ/mdldm-maitian-publisher) | Chrome 插件源码（各平台填写引擎） | 作为依赖目录 `maitian-publisher/` 存在，被 hub 动态加载 |
 
 **两个仓库不是重复，而是分层设计：** publisher 的 `lib/publish.js` 被 hub 动态加载，共享同一份适配器代码。
 
 ---
 
-## 本次改造内容
+## 系统架构
 
-### 修复 direct 模式的 Bug
+```
+config.json ──→ hub.mjs（入口，命令分发）
+                ├─ driver.mjs    ← 驱动选择层（direct / plugin）
+                │   ├─ chrome-shim.mjs  （direct 模式：Node 直连 CDP）
+                │   └─ bridge.mjs       （plugin 模式：开发桥通信）
+                ├─ db.mjs         ← SQLite 状态持久化（期数/任务/流量/日志/元数据）
+                ├─ checks.mjs     ← 发布前查重（X/YouTube/Instagram/B站）
+                ├─ feishu.mjs     ← 飞书卡片 + Webhook 通知（含去重）
+                ├─ web.mjs        ← 管理网页（8787 端口）
+                └─ publish.js     ← publisher 适配器（7 个平台填写引擎）
+```
 
-原 `src/chrome-shim.mjs` 在 Node.js 直连模式下有两个导致崩溃的问题：
-
-| # | 问题 | 影响 | 修复方式 |
-|---|------|------|---------|
-| P0 | `tabs.query()` 永远返回空数组 `[]` | `publish.js` 的 `withFocus()` 取不到当前活动页，crash | 改为从 CDP `Target.getTargets` 实时枚举已管理标签 |
-| P1 | `debugger.onDetach` 监听器不触发 | 外部关闭标签页后内部 `tabs/byTarget` Map 泄漏 | 在 `Target.targetDestroyed` 事件里补清理逻辑 |
-| P2 | `chrome.runtime.id` 缺失 | `removeForeignFrames`（YouTube 清理 foreign iframe）无法判断来源 | 补充 `runtime.id = 'publish-hub'` 及 `getManifest()` |
-| P3 | `detach({ tabId })` 未清空 sessionId | 重用已 detach 的 tabId 会导致 Session not found 错误 | 移除 sessionId 引用 |
-
-### Windows 兼容增强
-
-- `config.json` 默认使用 `driver: "direct"` + `pluginDir` 指向本地源码，无需安装 Chrome 商店插件
-- 安装了 `ws` 包用于 CDP WebSocket 通信（Node.js 内置 WebSocket 在部分场景不稳定）
-- 专用 Chrome profile 路径默认为项目内 `chrome-profile/` 子目录
-- **init.mjs**: Chrome 检测增加 Windows 路径分支（`Program Files` 和 `LOCALAPPDATA`）
-- **hub.mjs**: NAS 重挂逻辑区分 macOS（diskutil/osascript）和 Windows（net use）
+**两种驱动模式：**
+- `driver: "direct"`（默认）— Node.js 直连专用 Chrome 调试端口（CDP），无需安装 Chrome 商店插件
+- `driver: "plugin"` — 通过浏览器扩展面板的开发桥与已安装的 Chrome 插件通信
 
 ---
 
@@ -41,19 +38,21 @@
 ```powershell
 # 1. 确保环境
 node -v   # 需要 ≥ 22.5
-# git clone 已在本地完成：D:\程序\xxai-feed\maitian\
 
-# 2. 启动专用 Chrome（带调试端口）并打开各平台登录页
+# 2. 首次安装向导（生成 config.json）
 cd D:\程序\xxai-feed\maitian
+node src/init.mjs
+
+# 3. 启动专用 Chrome（带调试端口）并打开各平台登录页
 node src/hub.mjs login
 # → 弹出专用 Chrome，里面打开了 B站/抖音/小红书/视频号/YouTube/X/Instagram 登录页
 # → 在各页面完成扫码或账号密码登录
 
-# 3. 体检确认各平台状态
+# 4. 体检确认各平台状态
 node src/hub.mjs doctor
 
-# 4. 启动管理网页
-node src/web.mjs
+# 5. 启动管理网页
+node src/web.mjs          # ← 直接运行即可（旧版只导出函数会静默退出，已修复）
 # → 浏览器打开 http://localhost:8787/?key=<web.key>
 ```
 
@@ -84,10 +83,10 @@ node src/web.mjs
 
 | 平台 | 自动化程度 | 说明 |
 |------|-----------|------|
-| X (Twitter) | ✅ 全自动 | 填文案 → 自动点 Schedule |
+| X (Twitter) | ✅ 全自动 | 填文案 → 自动点 Schedule；支持长文+引用视频帖模式 |
 | YouTube | ✅ 全自动 | 查 Studio 列表核对 → 自动定时 |
 | Instagram | ✅ 全自动 | 设定时 → 自动提交 |
-| **B站** | ⚠️ 只填不发 | 填好标题/封面/标签后停止，等你手动点「发布」 |
+| **B站** | ⚠️ 只填不发 | 填好标题/封面/标签后停止，等你手动点「发布」；内置前置查重（按标题 API 查询投稿管理） |
 | **抖音** | ⚠️ 只填不发 | 同上 |
 | **小红书** | ⚠️ 只填不发 | 同上（最保守策略，不碰内部接口） |
 | **视频号** | ⚠️ 只填不发 | 同上（还会检测定时是否被平台篡改） |
@@ -99,16 +98,64 @@ node src/web.mjs
 ## 命令参考
 
 ```bash
-node src/hub.mjs login          # 打开专用 Chrome + 各平台登录页
-node src/hub.mjs doctor         # 体检：检查各平台登录态和上传页结构
-node src/hub.mjs plan <目录>    # 登记分发计划（不上传）
-node src/hub.mjs run <目录>     # 执行发布流程
-node src/hub.mjs status [id]    # 查看发布进度
-node src/hub.mjs sync <id>      # 取回已发布链接
-node src/hub.mjs metrics [id]   # 采集流量数据
-node src/web.mjs                # 启动管理网页（8787 端口）
-node src/demo.mjs               # 演示模式（假数据，看效果）
+node src/hub.mjs login               # 打开专用 Chrome + 各平台登录页
+node src/hub.mjs doctor              # 体检：检查各平台登录态和上传页结构
+node src/hub.mjs plan <目录>         # 登记分发计划（不上传）
+node src/hub.mjs run <目录> [选项]   # 执行发布流程
+                             --only a,b   只跑指定平台
+                             --force      忽略已到位状态重新跑
+node src/hub.mjs status [id] [--logs]        # 查看发布进度及操作日志
+node src/hub.mjs sync <id>           # 取回已发布链接、更新状态
+node src/hub.mjs metrics [id]        # 采集流量并发日报（飞书推送）
+node src/hub.mjs followers           # 采粉丝数
+node src/hub.mjs board               # 同步看板到飞书多维表格（Windows 跳过）
+node src/hub.mjs review <id> [天数]  # 输出某期 N 天复盘（--notify 发飞书）
+node src/hub.mjs weekly              # 周报（每周二自动发）
+node src/hub.mjs daemon              # 守护进程：定时轮询 + 自动取链接 + 提醒
+node src/hub.mjs submit <id> <平台>  # 手动提交某个平台（需专用 Chrome 里已填好）
+node src/hub.mjs mark <id> <平台> <状态>   # 人工修改状态
+node src/hub.mjs notify-test         # 测试飞书通知是否正常
+
+node src/web.mjs                     # 独立启动管理网页（8787 端口）
+node src/demo.mjs                    # 演示模式（假数据，看效果）
 ```
+
+---
+
+## 已修复问题记录（2026-11-18 累计）
+
+### 🔴 P0 — 阻断性问题（已全部修复）
+
+| 问题 | 影响 | 修复文件 | commit |
+|------|------|---------|--------|
+| `init.mjs` Chrome 检测硬编码 macOS 路径 | Windows 下 `node src/init.mjs` 报「没找到 Google Chrome」 | `src/init.mjs` | `26e6a26` |
+| `hub.mjs` NAS 重挂用 macOS 专有命令 | Windows 下载不到 NAS 时脚本报错 | `src/hub.mjs` | `26e6a26` |
+| `pruneLogs()` 90 天过滤形同虚设 | 总数 ≤ 5000 时所有旧日志全部保留，数据库无限增长 | `src/db.mjs` | `8c11e61` |
+| `node src/web.mjs` 静默 exit 0 | README 写的启动命令实际不可用，Web UI 无法独立打开 | `src/web.mjs` | `8c11e61` |
+
+### 🟡 P1/P2 — 中等优先级（已全部修复）
+
+| 问题 | 影响 | 修复方式 | commit |
+|------|------|---------|--------|
+| `caffeinate` Windows ENOENT uncaughtException | X 长文模式下脚本异步崩溃 | 拆 platform 分支：macOS 用 caffeinate + `.on('error')`；Windows 直接 spawn node，同时挂 error 监听避免 async crash | `defaebe` |
+| `busy()` 在 direct 模式恒 false | 无法阻止多期并发，可能同时触发两轮 Chrome 操作 | 实现 PID 锁文件方案：`run()` 写 `data/hub.pid`，`busy()` 检查另一进程是否存活；try/finally 保证异常退出时清锁 | `defaebe` |
+| 飞书通知同一事件重复发送（after 发一次 + daemon 20min 提醒又发一次） | 同一完成事件收双通知 | `notify()` 加 meta-key 去重：自动生成标题 key 存 meta，30 分钟内同内容不重发；quiet 验证码类跳过去重，支持 `_metaKey` 精确控制 | `defaebe` |
+| `board.mjs lark-cli` 在 Windows 抛 ENOENT | 运行 `hub board` 直接崩溃 | 启动时检测 `process.platform === 'win32'`，不存在则 warn 并 return null | `defaebe` |
+| publisher 上传等待循环中标签页丢失卡死 | Chrome 崩溃或被关标签后任务永远停在「上传中」 | `publish.js` 上传循环每轮先 `chrome.tabs.get(tabId)` 验证存活，丢失则标记异常并中断 | `6d7d78f`（publisher）|
+
+### 🟢 增强项（部分已实现）
+
+| 项目 | 状态 | 说明 |
+|------|------|------|
+| 每日自动 pruneLogs（daemon 每周日清理） | ✅ 已实现 | `pruneLogs(90, 5000)` 写入 daemon 循环，每次周日 9 点体检时触发 |
+| B站前置查重 | ✅ 已实现 | `checks.mjs` 新增 `bilibiliExisting(title)` 调投稿管理 API，`hub run` 防重阶段调用 |
+| X / YouTube / Instagram 查重 | ✅ 已有 | 原有的 `xExisting`、`ytRows`、`igExisting` 继续工作 |
+| WIP：抖音/小红书/视频号查重 | ❌ 未实现 | 这三个平台的发布 API 限制较多，暂不支持自动查重 |
+| E1 平台改版 DOM 告警 | ❌ 未实现 | 每次 preflight 额外检查关键元素指纹，连续失败发告警 |
+| E2 Chrome profile 缓存清理 | ❌ 未实现 | 每月自动清理 cache/cookie |
+| E3 ffprobe 视频格式校验 | ❌ 未实现 | 在 validateProject 阶段读取分辨率/码率/时长上限 |
+| E4 Web UI 一键提交按钮 | ❌ 未实现 | 在 web.mjs 状态卡上加手动提交入口 |
+| E5 多期并发队列 | ❌ 未实现 | 第二期排队等第一期结束（当前 busy() 仅支持抛错中止） |
 
 ---
 
@@ -124,6 +171,7 @@ E2E 测试结果（实测）：
 - ✅ 插件 lib/publish.js 加载成功（7 个平台适配器：bilibili/xhs/douyin/channels/youtube/x/instagram）
 - ✅ tabs.create/get/query/remove 全流程正常
 - ✅ preflight 登录检测可正常读取页面 DOM 状态
+- ✅ pruneLogs 日期过滤逻辑正确（4000 条旧日志测试场景）
 
 ---
 
