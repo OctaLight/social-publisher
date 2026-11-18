@@ -11,7 +11,7 @@
 //   hub metrics [id]                            采集流量并发日报
 //   hub daemon                                  常驻：到点自动取链接、提醒还没点发布的平台
 import fs from 'node:fs'; import path from 'node:path'; import os from 'node:os'; import crypto from 'node:crypto'; import { execFileSync, spawn } from 'node:child_process';
-import { db, NAMES, LOCKED, STATE_CN, upsertEpisode, getTask, getTasks, setTask, log, episodes, getEpisode, recentLogs, getMeta, setMeta, saveMetric, prevMetric, saveSnapshot } from './db.mjs';
+import { db, NAMES, LOCKED, STATE_CN, upsertEpisode, getTask, getTasks, setTask, log, episodes, getEpisode, recentLogs, getMeta, setMeta, saveMetric, prevMetric, saveSnapshot, pruneLogs } from './db.mjs';
 import { collectors } from './metrics.mjs';
 import { boardSync } from './board.mjs';
 const board = (o) => boardSync(o).then((r) => { if (r) console.log('看板已同步：' + JSON.stringify(r)); return r; }).catch((e) => { console.error('看板同步出错：' + e.message); });
@@ -22,7 +22,7 @@ import { SITE } from './site.mjs';
 import { learnOn, learnUrl, GROUP_URL } from './learn.mjs';
 import { validateProject } from './validate.mjs';
 import { STORE_URL, pluginInfo } from './plugin.mjs';
-import { xExisting, xSubmit, ytRows, ytSubmit, zszCourses, douyinTopics, igExisting, igSubmit } from './checks.mjs';
+import { xExisting, xSubmit, ytRows, ytSubmit, zszCourses, douyinTopics, igExisting, igSubmit, bilibiliExisting } from './checks.mjs';
 // 出错时附一次交流群和教程入口；每天最多一次，不刷屏（config.learnLinks = false 关掉）
 function helpTip() {
   if (!learnOn(config)) return '';
@@ -143,6 +143,7 @@ async function run() {
   if (await drv.busy()) throw new Error('插件里还有一轮在跑，等它结束或先停掉');
 
   // 防重 2：平台上已经有了的不再跑
+  if (todo.includes('bilibili')) { const e = await bilibiliExisting(pj.platforms.bilibili.title).catch(() => null); if (e) { setTask(ep.id, 'bilibili', e.state, e.detail, { url: e.url }); todo = todo.filter(i => i !== 'bilibili'); console.log('B站已有同名视频，跳过'); } }
   if (todo.includes('x')) { const e = await xExisting(pj.platforms.x.text).catch(() => null); if (e) { setTask(ep.id, 'x', e.state, e.detail, { url: e.url }); todo = todo.filter(i => i !== 'x'); console.log('X 上已经有这条，跳过'); } }
   if (todo.includes('youtube')) { const rows = await ytRows(pj.platforms.youtube.title).catch(() => null); if (rows && rows.length) {
     todo = todo.filter(i => i !== 'youtube');
@@ -289,15 +290,32 @@ async function doctor() {
 async function ensureNas() {
   const ok = () => { try { fs.accessSync(config.rootPath); return true; } catch { return false; } };
   if (ok()) return true;
-  // 2026-11-14：NAS 掉线重连后，macOS 有时把它挂到「…-1」，原路径就读不到了（封面全挂、NAS 灯变红）。
+  // macOS：NAS 掉线重连后有时把它挂到「…-1」，原路径就读不到了（封面全挂、NAS 灯变红）。
   // 发现同一个共享挂在带后缀的路径上，先卸掉再按原路径挂回来
-  try {
-    const vol = config.rootPath.split('/').slice(0, 3).join('/');   // /Volumes/<共享名>
-    for (const alt of fs.readdirSync('/Volumes').filter(n => n.startsWith(path.basename(vol) + '-')).map(n => '/Volumes/' + n)) {
-      if (fs.existsSync(path.join(alt, path.relative(vol, config.rootPath)))) { console.log(`NAS 挂到了 ${alt}，卸掉重挂`); execFileSync('diskutil', ['unmount', alt], { stdio: 'pipe', timeout: 20000 }); }
-    }
-  } catch (e) { console.error('处理 NAS 挂载点出错：' + e.message); }
-  if (config.nasUrl) { try { execFileSync('osascript', ['-e', `with timeout of 20 seconds\nmount volume "${config.nasUrl}"\nend timeout`], { stdio: 'pipe', timeout: 25000 }); } catch {} }
+  if (process.platform === 'darwin') {
+    try {
+      const vol = config.rootPath.split('/').slice(0, 3).join('/');   // /Volumes/<共享名>
+      for (const alt of fs.readdirSync('/Volumes').filter(n => n.startsWith(path.basename(vol) + '-')).map(n => '/Volumes/' + n)) {
+        if (fs.existsSync(path.join(alt, path.relative(vol, config.rootPath)))) { console.log(`NAS 挂到了 ${alt}，卸掉重挂`); execFileSync('diskutil', ['unmount', alt], { stdio: 'pipe', timeout: 20000 }); }
+      }
+    } catch (e) { console.error('处理 NAS 挂载点出错：' + e.message); }
+    if (config.nasUrl) { try { execFileSync('osascript', ['-e', `with timeout of 20 seconds\nmount volume "${config.nasUrl}"\nend timeout`], { stdio: 'pipe', timeout: 25000 }); } catch {} }
+  }
+  // Windows：尝试重新挂载 SMB 共享（如果配了 nasUrl）
+  else if (process.platform === 'win32' && config.nasUrl) {
+    try {
+      const m = config.nasUrl.match(/^smb:\/\/([^/]+)\/(.+)$/);
+      if (m) {
+        const sharePath = `\\\\${m[1]}\\${m[2]}`;
+        console.log(`Windows NAS 未连接，尝试重连 ${sharePath}`);
+        // 先断开所有该共享的连接
+        try { execFileSync('net', ['use', sharePath, '/delete'], { stdio: 'pipe', timeout: 5000 }); } catch {}
+        await drv.sleep(1000);
+        // 重新连接（会弹出凭据对话框或用已保存的凭据）
+        execFileSync('net', ['use', sharePath], { stdio: 'inherit', timeout: 25000 });
+      }
+    } catch (e) { console.error('Windows NAS 重连失败：' + e.message); }
+  }
   return ok();
 }
 
@@ -424,6 +442,14 @@ async function daemon() {
       // 每天上午体检一次，有平台掉线才通知
       const day = new Date().toLocaleDateString('zh-CN');
       if (new Date().getHours() >= 9 && getMeta('doctorDay') !== day) { setMeta('doctorDay', day); await doctor().catch((e) => console.error('体检出错：' + e.message)); }
+      // 每周日清理一次旧日志（保留90天，最多5000条）
+      if (new Date().getDay() === 0 && getMeta('logsPruned') !== day) {
+        setMeta('logsPruned', day);
+        try {
+          const removed = pruneLogs(90, 5000);
+          if (removed > 0) console.log(`日志已清理：删除 ${removed} 条旧记录`);
+        } catch (e) { console.error('日志清理失败：' + e.message); }
+      }
     } catch (e) { console.error('守护循环出错：' + e.message); }
     await drv.sleep(5 * MIN);
   }

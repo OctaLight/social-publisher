@@ -102,6 +102,22 @@ export async function zszCourses(title) {
   return withTab(SITE.admin, (id) => evaluate(id, `fetch(${JSON.stringify(SITE.coursesApi)},{credentials:'include'}).then(r=>r.json()).then(d=>(d.courses||[]).filter(c=>c.title===${JSON.stringify(title)}).map(c=>({id:c._id,vis:c.visibilityStatus,seriesId:c.seriesId})))`));
 }
 
+// B站：按标题在投稿管理页查重
+export async function bilibiliExisting(title) {
+  return withTab('https://member.bilibili.com/platform/upload-manager/article', async (tabId) => {
+    const list = await evaluate(tabId, `fetch('/x/web/archives?status=is_pubing%2Cpubed%2Cnot_pubed&pn=1&ps=30&coop=1',{credentials:'include'})
+      .then(r=>r.json()).then(d=>(d.data&&d.data.arc_audits||[]).map(a=>a.Archive))`).catch(() => []);
+    const match = (list || []).find(x => x.title === title);
+    if (!match) return null;
+    const sched = match.dtime && match.dtime * 1000 > Date.now();
+    return {
+      state: sched ? 'scheduled' : 'published',
+      detail: sched ? 'B站已有同名视频（定时）' : 'B站已有同名视频（已发布）',
+      url: `https://www.bilibili.com/video/${match.bvid}`
+    };
+  }, { wait: 8000 });
+}
+
 // 抖音：真正识别成话题的个数
 // 编辑器类名会变，整页找 data-mention 节点并去重（2026-11-12 第 37 期旧选择器读成 0/5，实际 5/5）
 export const douyinTopics = (tabId) => evaluate(tabId, `[...new Set([...document.querySelectorAll('[data-mention]')].map(e=>e.innerText.trim()).filter(Boolean))]`);

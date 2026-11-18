@@ -63,3 +63,18 @@ export function saveSnapshot(eid, project, overwrite = false) {
   db.prepare('INSERT OR REPLACE INTO snapshots (episode_id, taken_at, project) VALUES (?,?,?)').run(eid, new Date().toISOString(), JSON.stringify(project));
 }
 export const getSnapshot = (eid) => db.prepare('SELECT * FROM snapshots WHERE episode_id=?').get(eid);
+// 清理旧日志：保留最近 keepDays 天的记录，最多保留 maxRows 条（防止无限增长）
+export function pruneLogs(keepDays = 90, maxRows = 5000) {
+  const cutoff = new Date(Date.now() - keepDays * 86400e3).toISOString();
+  const countBefore = db.prepare('SELECT COUNT(*) as cnt FROM logs').get().cnt;
+  if (countBefore <= maxRows) return 0;
+  db.prepare('DELETE FROM logs WHERE ts < ?').run(cutoff);
+  // 如果清理后仍超过 maxRows，删除最早的直到满足上限
+  let countAfter = db.prepare('SELECT COUNT(*) as cnt FROM logs').get().cnt;
+  while (countAfter > maxRows) {
+    const toDelete = Math.min(countAfter - maxRows, 1000);
+    db.prepare('DELETE FROM logs WHERE id IN (SELECT id FROM logs ORDER BY id ASC LIMIT ?)').run(toDelete);
+    countAfter = db.prepare('SELECT COUNT(*) as cnt FROM logs').get().cnt;
+  }
+  return countBefore - countAfter;
+}

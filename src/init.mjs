@@ -34,7 +34,10 @@ console.log('一、检查环境');
 const [maj, min] = process.versions.node.split('.').map(Number);
 if (maj > 22 || (maj === 22 && min >= 5)) ok(`Node.js ${process.versions.node}`); else { bad(`Node.js ${process.versions.node}，需要 22.5 以上（用到内置 node:sqlite）`); tip(`卡住了看这里：${GROUP_URL}`); process.exit(1); }
 if (process.platform !== 'darwin') tip('目前只在 macOS 上实测过；其他系统需要自己改开机自启和 NAS 挂载部分');
-const chrome = ['/Applications/Google Chrome.app', path.join(os.homedir(), 'Applications/Google Chrome.app')].find(fs.existsSync);
+const chromePaths = process.platform === 'win32'
+  ? ['C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', path.join(process.env.LOCALAPPDATA || '', 'Google\\Chrome\\Application\\chrome.exe')]
+  : ['/Applications/Google Chrome.app', path.join(os.homedir(), 'Applications/Google Chrome.app')];
+const chrome = chromePaths.find(fs.existsSync);
 chrome ? ok('Google Chrome') : bad('没找到 Google Chrome，请先安装');
 let cf = false; try { execFileSync('which', ['cloudflared'], { stdio: 'pipe' }); cf = true; ok('cloudflared（可选，远程访问用）'); } catch { tip('没装 cloudflared：想在手机上远程看麦田，之后 brew install cloudflared'); }
 
