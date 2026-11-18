@@ -9,3 +9,5 @@ scripts-*.sh
 MAINTENANCE.md
 demo/
 src/*.local.mjs
+chrome-*/
+package-lock.json

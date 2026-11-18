@@ -75,7 +75,7 @@ async function session(id) {
 }
 
 export const chrome = {
-  runtime: { id: 'publish-hub' },
+  runtime: { id: 'publish-hub', getManifest: () => ({ version: '0.5.1' }) },
   scripting: { executeScript: async () => { throw new Error('专用 Chrome 里不支持 scripting'); } },
   tabs: {
     async create({ url, active = false }) {
@@ -89,17 +89,41 @@ export const chrome = {
       const { targetInfo } = await raw('Target.getTargetInfo', { targetId: tabOf(id).targetId });
       return { id, url: targetInfo.url, title: targetInfo.title, windowId: 1 };
     },
-    async query() { return []; },
-    async update(id, { active } = {}) { await connect(); if (active) await raw('Target.activateTarget', { targetId: tabOf(id).targetId }); return { id }; },
+    async query(opts = {}) {
+      await connect();
+      const results = [];
+      for (const [id, t] of tabs) {
+        const info = await raw('Target.getTargetInfo', { targetId: t.targetId }).catch(() => null);
+        if (!info) continue;
+        if (opts.active && info.targetInfo.type !== 'page') continue;
+        if (opts.windowId && info.targetInfo.type !== 'page') continue;
+        results.push({ id, url: info.targetInfo.url, title: info.targetInfo.title, windowId: 1 });
+      }
+      return results;
+    },
+    async update(id, { active } = {}) {
+      await connect();
+      if (active) await raw('Target.activateTarget', { targetId: tabOf(id).targetId });
+      return { id };
+    },
     async remove(ids) {
       await connect();
-      for (const id of [].concat(ids)) { const t = tabs.get(id); if (!t) continue; await session(id).catch(() => {}); await raw('Target.closeTarget', { targetId: t.targetId }).catch(() => {}); }
+      for (const id of [].concat(ids)) {
+        const t = tabs.get(id);
+        if (!t) continue;
+        await session(id).catch(() => {});
+        await raw('Target.closeTarget', { targetId: t.targetId }).catch(() => {});
+        tabs.delete(id); byTarget.delete(t.targetId);
+      }
     },
   },
   debugger: {
-    onDetach: { addListener() {} },
+    onDetach: { addListener(fn) { /* 由 Target.targetDestroyed 内部触发 */ } },
     async attach({ tabId }) { await connect(); await session(tabId); },
-    async detach() { /* 会话留着，后面的回读和提交还要用 */ },
+    async detach({ tabId }) {
+      const t = tabs.get(tabId);
+      if (t) { t.sessionId = null; }
+    },
     async sendCommand({ tabId }, method, params = {}) { await connect(); return raw(method, params, await session(tabId)); },
   },
 };
