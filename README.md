@@ -1,6 +1,8 @@
-# xxai_feed_maitian（麦田）本地部署版
+# 麦田社交发布系统（social-publisher）
 
-基于 [CzzzzzzJ/mdldm-maitian](https://github.com/CzzzzzzJ/mdldm-maitian) 的本地化改造版本，适配 Windows 直连运行。
+基于 [CzzzzzzJ/mdldm-maitian](https://github.com/CzzzzzzJ/mdldm-maitian) 的本地化部署版本，适配 Windows 直连运行。
+
+一个面向自媒体创作者的多平台视频内容自动分发工具，支持 B站、抖音、小红书、视频号、YouTube、X、Instagram 七大平台的一键填写与定时发布。
 
 ## 仓库说明
 

@@ -1,7 +1,7 @@
 {
-  "name": "mdldm-maitian",
+  "name": "social-publisher",
   "version": "0.4.0",
-  "description": "麦田：自媒体多平台发布中控与数据监控（B站/抖音/小红书/视频号/YouTube/X）",
+  "description": "麦田：自媒体多平台内容一键分发系统（B站/抖音/小红书/视频号/YouTube/X/Instagram）",
   "type": "module",
   "license": "MIT",
   "engines": {
@@ -12,7 +12,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/CzzzzzzJ/mdldm-maitian.git"
+    "url": "https://github.com/OctaLight/social-publisher.git"
   },
   "dependencies": {
     "ws": "^8.23.0"
