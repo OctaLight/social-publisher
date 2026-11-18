@@ -86,7 +86,7 @@ X/YouTube/Instagram 在执行 `run()` 前都会先查平台上是否已有内容
 
 ---
 
-### 🟢 增强项（锦上添花）
+### 🟢 增强项（建议逐步迭代）
 
 #### E1 — 平台 API 改版告警
 目前适配器全靠 DOM 选择器工作，改版后静默失败（比如 X 改了 CSS class，`tweetTextarea_0` 找不到了），只有用户在网页上看到异常才知道。  
@@ -148,3 +148,35 @@ X/YouTube/Instagram 在执行 `run()` 前都会先查平台上是否已有内容
 3. **维护性**（M4）— 长期运行的累积问题
 
 以上问题都不阻塞核心功能，可以逐步迭代修复。
+
+---
+
+## 六、复查发现（2026-11-18）
+
+### 🔴 Bug 已修复
+
+#### B1 — `pruneLogs()` 90 天过滤形同虚设（已修复）
+**根因：** 原实现先判断总数 ≤ maxRows 则提前 return，导致「保留最近 90 天」的日期过滤只在总日志超过 5000 条时才生效。  
+**实测场景：** 插入 1000 条 200 天前 + 3000 条 10 天前的日志 → 总数 4000 ≤ 5000 → 全部保留，一条不删。  
+**修复：** 去掉 early return，先按 `ts < cutoff` 删除旧记录，再做 maxRows 上限兜底。  
+**文件：** `src/db.mjs:67-80`
+
+#### B2 — `node src/web.mjs` 静默退出，Web UI 无法独立启动（已修复）
+**根因：** `web.mjs` 只导出 `startWeb()` 函数，文件末尾没有调用也无阻塞代码，Node.js 加载后直接退出（exit 0）。README 和 LOCAL_RUN_GUIDE.md 都写的此命令，但实际不可用。  
+**正确入口：** `node src/hub.mjs web`（hub.mjs 会调用 startWeb() + Promise 阻塞）或 `node src/hub.mjs daemon`（daemon 自动带起 Web）。  
+**修复：** 在 `web.mjs` 底部增加自启逻辑，当进程被直接运行时自动启动服务并阻塞等待 SIGINT/SIGTERM。  
+**文件：** `src/web.mjs:181-194`
+
+### 🟡 降级行为说明（不影响核心功能）
+
+#### S1 — Windows 下 osascript / lsof / caffeinate / sips 静默降级
+
+| 位置 | macOS 行为 | Windows 现象 | 是否有兜底 |
+|------|-----------|-------------|----------|
+| `chrome-shim.mjs:31` osascript 前台置顶 Chrome | 窗口带前台 | try/catch 吞掉，Chrome 后台运行 | ✅ 无影响 |
+| `chrome-shim.mjs:33` lsof 取 CDP 端口 PID | 获取进程 PID | try/catch 吞掉 | ✅ 无影响 |
+| `hub.mjs:329` lsof 查桥接端口 | 检测 bridge-server 是否运行 | try/catch 吞掉 → 每次都重复 spawn，可接受 | ✅ 轻微冗余 |
+| `hub.mjs:333` caffeinate 防止休眠（X 长文模式） | 系统保持唤醒 | 加 try/catch 后退回纯 node spawn，脚本本身可能触发系统休眠策略限制 | ⚠️ 仅在 X 长文模式下有影响 |
+| `web.mjs:101` sips 生成缩略图 | JPEG 缩略图缓存 | try/catch 吞掉 → 返回 null → 使用原图 | ✅ 图片稍大但不影响功能 |
+
+所有 macOS 专有命令均已用 try/catch 包裹，不会导致崩溃。

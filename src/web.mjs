@@ -92,6 +92,7 @@ button{width:100%;height:50px;border:0;border-radius:14px;background:#1c1a16;col
 document.getElementById('b').onclick=async()=>{try{await navigator.clipboard.writeText(code);b.textContent='已复制 ✓';}catch{const r=document.createRange();r.selectNodeContents(c);getSelection().removeAllRanges();getSelection().addRange(r);b.textContent='长按选中的文字复制';}};</script></body></html>`;
 
 // 缩略图：macOS 自带 sips 缩放转 JPEG，按 原文件路径+修改时间+尺寸 缓存；失败返回 null（退回原图）
+// Windows/Linux：sips 不可用，退回原图；后续可接入 sharp/Canvas 做跨平台缩略图
 function thumb(f, w) {
   try {
     const st = fs.statSync(f), dir = path.join(ROOT, 'data', 'thumbs');
@@ -184,4 +185,12 @@ export function startWeb() {
   srv.listen(W.port, '0.0.0.0', () => console.log(`麦田网页：http://localhost:${W.port}/?key=${W.key}`));
   srv.on('error', (e) => console.error('麦田网页没起来：' + e.message));
   return srv;
+}
+
+// 直接运行时启动网页服务并阻塞（node src/web.mjs 可用入口）
+if (process.argv[1] && path.basename(process.argv[1]).replace(/\.(m|c)?js$/, '') === 'web') {
+  startWeb();
+  // 保持进程存活，直到收到 SIGINT/SIGTERM
+  process.on('SIGINT', () => { process.exit(0); });
+  process.on('SIGTERM', () => { process.exit(0); });
 }

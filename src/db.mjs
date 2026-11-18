@@ -67,7 +67,7 @@ export const getSnapshot = (eid) => db.prepare('SELECT * FROM snapshots WHERE ep
 export function pruneLogs(keepDays = 90, maxRows = 5000) {
   const cutoff = new Date(Date.now() - keepDays * 86400e3).toISOString();
   const countBefore = db.prepare('SELECT COUNT(*) as cnt FROM logs').get().cnt;
-  if (countBefore <= maxRows) return 0;
+  // 先按日期过滤，确保 keepDays 之前的记录一定被清理（不管总数是否超过 maxRows）
   db.prepare('DELETE FROM logs WHERE ts < ?').run(cutoff);
   // 如果清理后仍超过 maxRows，删除最早的直到满足上限
   let countAfter = db.prepare('SELECT COUNT(*) as cnt FROM logs').get().cnt;
