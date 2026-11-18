@@ -1,4 +1,5 @@
 import fs from 'node:fs'; import path from 'node:path'; import { fileURLToPath } from 'node:url';
+import { getMeta, setMeta } from './db.mjs';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CFG = process.env.MAITIAN_CONFIG || path.join(ROOT, 'config.json');
 if (!fs.existsSync(CFG)) { console.error('还没有 config.json：先运行 node src/init.mjs（安装向导），或者 node src/demo.mjs 用假数据看看效果'); process.exit(1); }
@@ -48,9 +49,16 @@ async function post(body) {
 }
 
 // 发飞书群消息；卡片发不出去就退回纯文字；失败只打印，不影响主流程
-export async function notify(text, { quiet = false } = {}) {
+const NOTIFY_WINDOW = 30 * 60 * 1000; // 同一内容 30 分钟内不重复发送
+export async function notify(text, { quiet = false, _metaKey = null } = {}) {
   if (!quiet) console.log(`[飞书] ${text.replace(/\n/g, ' | ')}`);   // quiet：验证码之类的不写日志
   if (!config.feishuWebhook) return;
+  // 去重：用 meta key 记录上次发送时间，同 key 在窗口期内不重发
+  // 自动生成 key = 取第一行标题（不含表情），便于 dedup；调用方可传 _metaKey 精确控制
+  const autoKey = _metaKey || ('notify:' + (text.split('\n')[0] || '').replace(/^[\u{1F300}-\u{1FAFF}\s]+/u, '').slice(0, 40));
+  const lastSent = +getMeta(autoKey) || 0;
+  if (Date.now() - lastSent < NOTIFY_WINDOW) return; // 窗口期内跳过
+  setMeta(autoKey, Date.now());
   try {
     let j = await post({ msg_type: 'interactive', card: toCard(text) });
     if (j.code && j.code !== 0) { console.error('飞书卡片被拒，改发文字：', JSON.stringify(j)); j = await post({ msg_type: 'text', content: { text } }); }

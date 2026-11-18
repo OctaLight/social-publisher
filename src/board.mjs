@@ -1,6 +1,6 @@
 // 飞书多维表格看板：期数、平台发布、每日流量、知识站每日、渠道转化。中控单向写入，按 key 更新不重复。
 import fs from 'node:fs'; import path from 'node:path'; import { execFile } from 'node:child_process'; import { fileURLToPath } from 'node:url';
-import { db, NAMES, STATE_CN, episodes, getTasks, setMeta } from './db.mjs';
+import { db, NAMES, STATE_CN, episodes, getTasks, setMeta, getMeta } from './db.mjs';
 import { config } from './feishu.mjs';
 import { evaluate, withTab } from './driver.mjs';
 import { SITE } from './site.mjs';
@@ -65,6 +65,8 @@ export async function fetchSite() {
 
 export async function boardSync({ site = true } = {}) {
   if (!B) return null;
+  // Windows：lark-cli 是 macOS/Linux 工具，Windows 上不存在会抛 ENOENT；提前拦截避免无意义报错
+  if (process.platform === 'win32') { console.warn('[board] lark-cli 在 Windows 不可用，跳过看板同步'); return null; }
   const eps = episodes(), out = {};
   const latest = db.prepare('SELECT * FROM metrics WHERE episode_id=? AND platform=? ORDER BY day DESC LIMIT 1');
   const epRows = [], taskRows = [], pubDays = {};

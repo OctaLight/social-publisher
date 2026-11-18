@@ -11,6 +11,9 @@
 //   hub metrics [id]                            采集流量并发日报
 //   hub daemon                                  常驻：到点自动取链接、提醒还没点发布的平台
 import fs from 'node:fs'; import path from 'node:path'; import os from 'node:os'; import crypto from 'node:crypto'; import { execFileSync, spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+const HUB_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const LOCK_FILE = path.join(HUB_DIR, 'data', 'hub.pid'); // direct 模式并发锁：写入当前 PID，退出时清除
 import { db, NAMES, LOCKED, STATE_CN, upsertEpisode, getTask, getTasks, setTask, log, episodes, getEpisode, recentLogs, getMeta, setMeta, saveMetric, prevMetric, saveSnapshot, pruneLogs } from './db.mjs';
 import { collectors } from './metrics.mjs';
 import { boardSync } from './board.mjs';
@@ -119,6 +122,17 @@ async function submitOne() {
 }
 
 async function run() {
+  const dir = path.resolve(args[1] || '');
+  if (!fs.existsSync(path.join(dir, 'publish.json'))) throw new Error(`${dir} 里没有 publish.json`);
+  // 写 PID 锁：防止多个 hub.run 同时跑同一台 Chrome
+  try { fs.mkdirSync(path.join(HUB_DIR, 'data'), { recursive: true }); fs.writeFileSync(LOCK_FILE, String(process.pid)); } catch {}
+  try {
+    await _run();
+  } finally {
+    try { fs.unlinkSync(LOCK_FILE); } catch {} // 无论成功还是异常都清锁
+  }
+}
+async function _run() {
   const dir = path.resolve(args[1] || '');
   if (!fs.existsSync(path.join(dir, 'publish.json'))) throw new Error(`${dir} 里没有 publish.json`);
   const v = await validateProject(dir);
@@ -330,10 +344,23 @@ function startArticleJob(ep, pj) {
   catch { spawn(process.execPath, ['tools/bridge-server.mjs'], { cwd: config.pluginDir, detached: true, stdio: 'ignore' }).unref(); }
   try { execFileSync('open', ['-g', '-a', 'Google Chrome', `chrome-extension://${extId()}/sidepanel.html`], { stdio: 'pipe' }); } catch {}
   const out = fs.openSync(logf, 'a');
-  try { spawn('caffeinate', ['-dims', process.execPath, path.join(config.pluginDir, 'tools/x-article-quote.mjs'), '--draft', x.article, '--video', path.join(dir, pj.video || '成片.mp4'),
-    '--text', textf, '--at', pj.schedule, '--prep', '20', '--hub-id', ep.id], { cwd: config.pluginDir, detached: true, stdio: ['ignore', out, out], env: { ...process.env, PUBLISH_HUB: path.resolve(path.dirname(logf), '..') } }).unref(); }
-  catch (e) { log(ep.id, 'x', 'article-job-no-caffeinate', e.message); spawn(process.execPath, [path.join(config.pluginDir, 'tools/x-article-quote.mjs'), '--draft', x.article, '--video', path.join(dir, pj.video || '成片.mp4'),
-    '--text', textf, '--at', pj.schedule, '--prep', '20', '--hub-id', ep.id], { cwd: config.pluginDir, detached: true, stdio: ['ignore', out, out], env: { ...process.env, PUBLISH_HUB: path.resolve(path.dirname(logf), '..') } }).unref(); }
+  // caffeinate 是 macOS 专用命令，Windows/Linux 下 spawn 会异步抛 error 事件（不经过 try/catch），
+  // 需要显式监听 .on('error') 否则进程会以 uncaughtException 退出。
+  const qCmd = path.join(config.pluginDir, 'tools/x-article-quote.mjs');
+  const artArgs = ['--draft', x.article, '--video', path.join(dir, pj.video || '成片.mp4'),
+    '--text', textf, '--at', pj.schedule, '--prep', '20', '--hub-id', ep.id];
+  const artEnv = { ...process.env, PUBLISH_HUB: path.resolve(path.dirname(logf), '..') };
+  if (process.platform === 'darwin') {
+    // macOS：用 caffeinate 防止系统休眠；spawn error 是异步事件，必须显式监听，否则无监听时直接 uncaughtException 崩溃
+    const proc = spawn('caffeinate', ['-dims', process.execPath, qCmd, ...artArgs], { cwd: config.pluginDir, detached: true, stdio: ['ignore', out, out], env: artEnv });
+    proc.on('error', () => {});   // 忽略 spawn 失败（理论上不会发生）
+    proc.unref();
+  } else {
+    // Windows/Linux：无 caffeinate，直接启动脚本；同样需要 error 监听避免 async error 崩溃
+    const proc = spawn(process.execPath, [qCmd, ...artArgs], { cwd: config.pluginDir, detached: true, stdio: ['ignore', out, out], env: artEnv });
+    proc.on('error', () => {});
+    proc.unref();
+  }
   log(ep.id, 'x', 'article-job', `启动长文脚本，日志 ${logf}`);
 }
 

@@ -1,6 +1,7 @@
 // 驱动选择：direct = 中控直连专用 Chrome（默认）；plugin = 通过插件面板的开发桥
+import fs from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 import { config } from './feishu.mjs';
 import * as bridge from './bridge.mjs';
 import { pluginDir, pluginInfo } from './plugin.mjs';
@@ -32,7 +33,24 @@ export async function withTab(url, fn, { wait = 8000 } = {}) {
   await load(); const t = await chrome.tabs.create({ url, active: false });
   try { await sleep(wait); return await fn(t.id); } finally { await chrome.tabs.remove(t.id).catch(() => {}); }
 }
-export async function busy() { if (mode !== 'plugin') return false; const j = await bridge.panel('job', [], 30000); return !!(j && j.running); }
+export async function busy() {
+  if (mode !== 'plugin') {
+    // direct 模式用 PID 锁文件检测并发：hub.run 启动时写入 data/hub.pid，退出或崩溃后清除；
+    // 若记录的是另一个进程的 PID 且该进程还活着，则认为有并发任务在跑
+    const pDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+    const lockPath = path.join(pDir, 'data', 'hub.pid');
+    try {
+      const line = fs.readFileSync(lockPath, 'utf8').trim();
+      const lockPid = +line;
+      if (lockPid && lockPid !== process.pid) {
+        try { process.kill(lockPid, 0); return true; } catch { /* 进程已死，锁文件是残留 */ fs.unlinkSync(lockPath); }
+      }
+    } catch {}
+    return false;
+  }
+  const j = await bridge.panel('job', [], 30000);
+  return !!(j && j.running);
+}
 
 // 商店里的插件版本还没有某个平台的适配器（比如新平台刚加、商店还在审核）：这几个平台先跳过并说明
 const split = (pub, ids) => [ids.filter(id => pub.ADAPTERS[id]), ids.filter(id => !pub.ADAPTERS[id])];
