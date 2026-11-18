@@ -40,7 +40,6 @@ config.json ──→ hub.mjs（入口，命令分发）
 node -v   # 需要 ≥ 22.5
 
 # 2. 首次安装向导（生成 config.json）
-cd D:\程序\xxai-feed\maitian
 node src/init.mjs
 
 # 3. 启动专用 Chrome（带调试端口）并打开各平台登录页
@@ -61,10 +60,10 @@ node src/web.mjs          # ← 直接运行即可（旧版只导出函数会静
 ```json
 {
   "plugin": "local",
-  "pluginDir": "D:/程序/xxai-feed/maitian-publisher",
+  "pluginDir": "<publisher 仓库绝对路径，如 /Users/xxx/mdldm-maitian-publisher>",
   "driver": "direct",
   "chromePort": 9333,
-  "chromeProfile": "D:/程序/xxai-feed/maitian/chrome-profile",
+  "chromeProfile": "<Chrome 专用 profile 目录，如 ./chrome-profile>",
   "rootPath": "<你的视频工程文件夹>",
   "auto": ["youtube", "x", "instagram"],
   "manual": ["bilibili", "douyin", "xhs", "channels"]
@@ -162,7 +161,6 @@ node src/demo.mjs                    # 演示模式（假数据，看效果）
 ## 测试验证
 
 ```powershell
-cd D:\程序\xxai-feed\maitian
 node test_e2e.mjs    # E2E 集成测试（Chrome CDP ↔ publish.js 协同）
 ```
 
