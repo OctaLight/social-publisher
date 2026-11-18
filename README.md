@@ -138,7 +138,7 @@ node src/demo.mjs                    # 演示模式（假数据，看效果）
 |------|------|---------|--------|
 | `caffeinate` Windows ENOENT uncaughtException | X 长文模式下脚本异步崩溃 | 拆 platform 分支：macOS 用 caffeinate + `.on('error')`；Windows 直接 spawn node，同时挂 error 监听避免 async crash | `defaebe` |
 | `busy()` 在 direct 模式恒 false | 无法阻止多期并发，可能同时触发两轮 Chrome 操作 | 实现 PID 锁文件方案：`run()` 写 `data/hub.pid`，`busy()` 检查另一进程是否存活；try/finally 保证异常退出时清锁 | `defaebe` |
-| 飞书通知同一事件重复发送（after 发一次 + daemon 20min 提醒又发一次） | 同一完成事件收双通知 | `notify()` 加 meta-key 去重：自动生成标题 key 存 meta，30 分钟内同内容不重发；quiet 验证码类跳过去重，支持 `_metaKey` 精确控制 | `defaebe` |
+| 飞书通知同一事件重复发送（after 发一次 + daemon 20min 提醒又发一次） | 同一完成事件收双通知 | hub.mjs 关键 notify 调用加显式 `_metaKey`（如 `after:${epId}:${platform}`、`remind:${epId}`），同一事件 across after()/daemon 精确互斥；通用路径仍靠 30min 内容窗口兜底，支持 quiet 验证码类跳过 | `defaebe` |
 | `board.mjs lark-cli` 在 Windows 抛 ENOENT | 运行 `hub board` 直接崩溃 | 启动时检测 `process.platform === 'win32'`，不存在则 warn 并 return null | `defaebe` |
 | publisher 上传等待循环中标签页丢失卡死 | Chrome 崩溃或被关标签后任务永远停在「上传中」 | `publish.js` 上传循环每轮先 `chrome.tabs.get(tabId)` 验证存活，丢失则标记异常并中断 | `6d7d78f`（publisher）|
 
@@ -154,7 +154,7 @@ node src/demo.mjs                    # 演示模式（假数据，看效果）
 | E2 Chrome profile 缓存清理 | ❌ 未实现 | 每月自动清理 cache/cookie |
 | E3 ffprobe 视频格式校验 | ❌ 未实现 | 在 validateProject 阶段读取分辨率/码率/时长上限 |
 | E4 Web UI 一键提交按钮 | ❌ 未实现 | 在 web.mjs 状态卡上加手动提交入口 |
-| E5 多期并发队列 | ❌ 未实现 | 第二期排队等第一期结束（当前 busy() 仅支持抛错中止） |
+| E5 多期并发队列 | 🟡 部分缓解 | direct 模式下 `hub.run()` 写 `data/hub.pid`，`busy()` 检查另一进程存活；若两个 run 几乎同时启动仍可穿透（非互斥队列）。单人本机可忽略；多人共用需改写成进程级互斥 |
 
 ---
 

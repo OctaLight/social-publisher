@@ -80,14 +80,14 @@ async function after(ep, pj, id, res) {
     if (id === 'zsz') {
       const cs = await zszCourses(p.title);
       if (cs.length === 1) setTask(ep.id, id, cs[0].vis === 'published' ? 'published' : 'scheduled', cs[0].vis === 'published' ? '已上线' : '转码中，完成后自动上线', { url: SITE.courseUrl(cs[0]) });
-      else { setTask(ep.id, id, 'failed', `后台同名课程有 ${cs.length} 节`); await notify(`❌ ${ep.name}\n知识站：同名课程 ${cs.length} 节，请检查`); }
+      else { setTask(ep.id, id, 'failed', `后台同名课程有 ${cs.length} 节`); await notify(`❌ ${ep.name}\n知识站：同名课程 ${cs.length} 节，请检查`, { _metaKey: `err:${ep.id}:zsz` }); }
       return;
     }
     const r = id === 'x' ? await xSubmit(res.tabId, p.text, pj.schedule) : id === 'instagram' ? await igSubmit(res.tabId, p.caption, pj.schedule) : await ytSubmit(res.tabId, p.title, pj.schedule);
     log(ep.id, id, 'submit', JSON.stringify(r));
     if (r.ok) setTask(ep.id, id, r.state, r.detail || '', { url: r.url });
-    else { setTask(ep.id, id, 'awaiting_user', r.reason); await notify(`⚠️ ${ep.name}\n${NAMES[id]} 没能自动提交：${r.reason}`); }
-  } catch (e) { setTask(ep.id, id, 'awaiting_user', `自动步骤出错：${e.message}`); await notify(`⚠️ ${ep.name}\n${NAMES[id]} 自动步骤出错：${e.message}`); }
+    else { setTask(ep.id, id, 'awaiting_user', r.reason); await notify(`⚠️ ${ep.name}\n${NAMES[id]} 没能自动提交：${r.reason}`, { _metaKey: `after:${ep.id}:${id}` }); }
+  } catch (e) { setTask(ep.id, id, 'awaiting_user', `自动步骤出错：${e.message}`); await notify(`⚠️ ${ep.name}\n${NAMES[id]} 自动步骤出错：${e.message}`, { _metaKey: `after:${ep.id}:${id}` }); }
 }
 
 // hub submit <id> <平台>：中控卡住时，把专用 Chrome 里已经填好的发帖页单独提交一次（只限 X / YouTube / Instagram）
@@ -196,7 +196,7 @@ async function _run() {
     catch (e) { for (const id of batch) setTask(ep.id, id, 'failed', e.message); await notify(`❌ ${ep.name}\n${batch.map(i => NAMES[i]).join('、')} 这一批没跑起来：${e.message}${helpTip()}`); continue; }
     for (const id of batch) if (res[id]) pending.push(after(ep, pj, id, res[id]).then(async () => {
       const t = getTask(ep.id, id);
-      if (['awaiting_user', 'scheduled', 'published'].includes(t.state)) await notify(`${t.state === 'awaiting_user' ? '👉' : '✅'} ${ep.name}\n${NAMES[id]}：${STATE_CN[t.state]}${t.detail ? `，${t.detail}` : ''}${t.url ? `\n${t.url}` : ''}`);
+      if (['awaiting_user', 'scheduled', 'published'].includes(t.state)) await notify(`${t.state === 'awaiting_user' ? '👉' : '✅'} ${ep.name}\n${NAMES[id]}：${STATE_CN[t.state]}${t.detail ? `，${t.detail}` : ''}${t.url ? `\n${t.url}` : ''}`, { _metaKey: `after:${ep.id}:${id}` });
     }));
   }
   await Promise.all(pending);
@@ -211,7 +211,7 @@ async function _run() {
     let res; try { res = await runBatch(ep, pj, ok); } catch (e) { for (const id of ok) setTask(ep.id, id, 'failed', e.message); continue; }
     await Promise.all(ok.filter(id => res[id]).map(id => after(ep, pj, id, res[id]).then(async () => {
       const t = getTask(ep.id, id);
-      if (['awaiting_user', 'scheduled', 'published'].includes(t.state)) await notify(`${t.state === 'awaiting_user' ? '👉' : '✅'} ${ep.name}\n${NAMES[id]}（扫码后补跑）：${STATE_CN[t.state]}${t.detail ? `，${t.detail}` : ''}${t.url ? `\n${t.url}` : ''}`);
+      if (['awaiting_user', 'scheduled', 'published'].includes(t.state)) await notify(`${t.state === 'awaiting_user' ? '👉' : '✅'} ${ep.name}\n${NAMES[id]}（扫码后补跑）：${STATE_CN[t.state]}${t.detail ? `，${t.detail}` : ''}${t.url ? `\n${t.url}` : ''}`, { _metaKey: `retry:${ep.id}:${id}` });
     })));
   }
   if (retry.length) await notify(`⚠️ ${ep.name}\n${retry.map(i => NAMES[i]).join('、')} 20 分钟内还没登录，没补跑；登录后运行 hub run <目录> --only ${retry.join(',')}`);
@@ -409,19 +409,19 @@ async function daemon() {
         }
         if (zt && zt.state === 'scheduled' && every(`zszcheck:${ep.id}`, 10 * MIN)) {
           const pj0 = loadProject(ep.dir); const cs = await zszCourses(pj0.platforms.zsz.title).catch(() => []);
-          if (cs.length === 1 && cs[0].vis === 'published') { setTask(ep.id, 'zsz', 'published', '已上线', { url: SITE.courseUrl(cs[0]) }); await notify(`✅ ${ep.name}\n知识站：已上线`); }
+          if (cs.length === 1 && cs[0].vis === 'published') { setTask(ep.id, 'zsz', 'published', '已上线', { url: SITE.courseUrl(cs[0]) }); await notify(`✅ ${ep.name}\n知识站：已上线`, { _metaKey: `zsz-done:${ep.id}` }); }
         }
         const waiting = tasks.filter(t => t.state === 'awaiting_user');
         const unsettled = tasks.filter(t => t.state === 'scheduled' || (t.state === 'published' && !t.url && t.platform !== 'channels'));
         if (waiting.length && every(`remind:${ep.id}`, 20 * MIN)) {
           const changed = await sync(ep, waiting.map(t => t.platform), true).catch(() => false);
           const still = getTasks(ep.id).filter(t => t.state === 'awaiting_user');
-          if (still.length && !changed) await notify(`⏰ ${ep.name}\n还在等你点发布：${still.map(t => NAMES[t.platform]).join('、')}${sched ? `\n定时时间 ${ep.schedule.replace('T', ' ').slice(0, 16)}` : ''}`);
+          if (still.length && !changed) await notify(`⏰ ${ep.name}\n还在等你点发布：${still.map(t => NAMES[t.platform]).join('、')}${sched ? `\n定时时间 ${ep.schedule.replace('T', ' ').slice(0, 16)}` : ''}`, { _metaKey: `remind:${ep.id}` });
         }
         if (unsettled.length && (!sched || Date.now() > sched + 5 * MIN) && Date.now() < (sched || Date.parse(ep.created_at)) + 24 * 3600e3 && every(`sync:${ep.id}`, 30 * MIN)) {
           await sync(ep, unsettled.map(t => t.platform), true).catch((e) => console.error('sync 出错：' + e.message));
           const left = getTasks(ep.id).filter(t => t.state === 'scheduled');
-          if (!left.length && !getMeta(`done:${ep.id}`)) { setMeta(`done:${ep.id}`, 1); await notify(`🎉 ${ep.name}\n全部平台已发布\n${table(ep.id)}`); }
+          if (!left.length && !getMeta(`done:${ep.id}`)) { setMeta(`done:${ep.id}`, 1); await notify(`🎉 ${ep.name}\n全部平台已发布\n${table(ep.id)}`, { _metaKey: `done-celebrate:${ep.id}` }); }
         }
       }
       // 新发的一期头三天加密采样（每 6 小时一次），之后回到每天一次
